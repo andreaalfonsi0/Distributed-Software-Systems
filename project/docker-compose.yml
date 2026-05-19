@@ -1,0 +1,77 @@
+services:
+  node1:
+    build: .
+    container_name: ds-node1
+    environment:
+      NODE_ID: node1
+      REST_HOST: 0.0.0.0
+      REST_PORT: 8000
+      RPC_HOST: 0.0.0.0
+      RPC_PORT: 9000
+      DATA_DIR: /data
+      REPLICATION_FACTOR: 3
+      WRITE_QUORUM: 2
+      READ_QUORUM: 2
+      HEALTH_CHECK_INTERVAL: 5
+      RPC_TIMEOUT: 3
+      PEERS: >-
+        [{"node_id":"node2","host":"node2","rest_port":8000,"rpc_port":9000},
+         {"node_id":"node3","host":"node3","rest_port":8000,"rpc_port":9000}]
+    ports:
+      - "8001:8000"
+      - "9001:9000"
+    volumes:
+      - node1-data:/data
+
+  node2:
+    build: .
+    container_name: ds-node2
+    environment:
+      NODE_ID: node2
+      REST_HOST: 0.0.0.0
+      REST_PORT: 8000
+      RPC_HOST: 0.0.0.0
+      RPC_PORT: 9000
+      DATA_DIR: /data
+      REPLICATION_FACTOR: 3
+      WRITE_QUORUM: 2
+      READ_QUORUM: 2
+      HEALTH_CHECK_INTERVAL: 5
+      RPC_TIMEOUT: 3
+      PEERS: >-
+        [{"node_id":"node1","host":"node1","rest_port":8000,"rpc_port":9000},
+         {"node_id":"node3","host":"node3","rest_port":8000,"rpc_port":9000}]
+    ports:
+      - "8002:8000"
+      - "9002:9000"
+    volumes:
+      - node2-data:/data
+
+  node3:
+    build: .
+    container_name: ds-node3
+    environment:
+      NODE_ID: node3
+      REST_HOST: 0.0.0.0
+      REST_PORT: 8000
+      RPC_HOST: 0.0.0.0
+      RPC_PORT: 9000
+      DATA_DIR: /data
+      REPLICATION_FACTOR: 3
+      WRITE_QUORUM: 2
+      READ_QUORUM: 2
+      HEALTH_CHECK_INTERVAL: 5
+      RPC_TIMEOUT: 3
+      PEERS: >-
+        [{"node_id":"node1","host":"node1","rest_port":8000,"rpc_port":9000},
+         {"node_id":"node2","host":"node2","rest_port":8000,"rpc_port":9000}]
+    ports:
+      - "8003:8000"
+      - "9003:9000"
+    volumes:
+      - node3-data:/data
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
