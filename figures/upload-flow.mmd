@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant C as Client
+    participant N1 as Ingress Node
+    participant N2 as Replica Node
+    participant N3 as Replica Node
+
+    C->>N1: POST /files/upload
+    N1->>N1: Tick Lamport clock
+    N1->>N1: Persist file + metadata
+    par Replication
+        N1->>N2: replicate_file RPC
+        N1->>N3: replicate_file RPC
+    end
+    N2->>N2: Update Lamport clock
+    N3->>N3: Update Lamport clock
+    N2-->>N1: ack
+    N3-->>N1: ack
+    N1-->>C: 201 Created

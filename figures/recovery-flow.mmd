@@ -1,0 +1,11 @@
+sequenceDiagram
+    participant N1 as Healthy Node
+    participant N3 as Recovered Node
+
+    loop health check
+        N1->>N3: ping RPC
+    end
+    N3-->>N1: reachable again
+    N1->>N3: get_catalog RPC
+    N1->>N3: replicate newer local objects
+    N1->>N1: fetch newer remote objects when needed

@@ -1,0 +1,12 @@
+flowchart LR
+    Client[REST Client] --> API1[FastAPI Node 1]
+    Client --> API2[FastAPI Node 2]
+    Client --> API3[FastAPI Node 3]
+
+    API1 <-->|JSON RPC over TCP| API2
+    API2 <-->|JSON RPC over TCP| API3
+    API1 <-->|JSON RPC over TCP| API3
+
+    API1 --> S1[(Local file store)]
+    API2 --> S2[(Local file store)]
+    API3 --> S3[(Local file store)]
