@@ -44,20 +44,9 @@ After using this tool, the author reviewed and edited the generated text as need
 
 The developed product is a distributed web service for file hosting. Each node provides a REST interface for client-facing upload, listing, metadata inspection, and download. Nodes also run an internal RPC service to replicate data, exchange metadata catalogs, and recover after failures.
 
-Expected and tested interactions include:
-\begin{itemize}
-  \item frequent uploads of small and medium files,
-  \item occasional downloads from any reachable node,
-  \item operational checks of cluster health,
-  \item fault-injection experiments in teaching or testing scenarios.
-\end{itemize}
+The system is designed to handle frequent uploads of small and medium files, occasional downloads from any reachable node, and operational health checks of cluster status. It is also suited for fault-injection experiments in teaching or testing scenarios.
 
-Distribution is needed for three main reasons:
-\begin{itemize}
-  \item \textbf{Fault tolerance}: files are replicated across peers, so node crashes do not imply immediate data loss.
-  \item \textbf{Availability}: client requests can be served by multiple nodes; writes can still complete if quorum is met.
-  \item \textbf{Resource sharing}: storage and traffic are spread across nodes, avoiding a single bottleneck.
-\end{itemize}
+Distribution is motivated by three main concerns. First, \textbf{fault tolerance}: files are replicated across peers, so node crashes do not imply immediate data loss. Second, \textbf{availability}: client requests can be served by multiple nodes, and writes can still complete as long as quorum is met. Third, \textbf{resource sharing}: storage and traffic are spread across nodes, avoiding a single point of congestion.
 
 \section{Requirements Elicitation and Analysis}\label{requirements}
 
@@ -120,31 +109,21 @@ Distribution is needed for three main reasons:
 \subsection{Relevant Distributed System Features}
 \label{ds-features}
 
-\begin{itemize}
-  \item \textbf{Transparency (partially relevant):} clients can use any node with the same REST API, but distribution details are intentionally visible in health and replication diagnostics.
-  \item \textbf{Fault tolerance and dependability (highly relevant):} replication, periodic ping checks, and post-failure synchronization are central goals.
-  \item \textbf{Scalability (moderately relevant):} architecture is peer-based and horizontally extensible, but no dynamic membership or sharding is implemented yet.
-  \item \textbf{Security (currently limited):} no authentication/authorization layer is present; this is acceptable for a lab prototype but not production-ready.
-  \item \textbf{Resource sharing (highly relevant):} storage is shared across nodes through replication and metadata coordination.
-  \item \textbf{Openness/interoperability (relevant):} communication uses standard HTTP and JSON, easing integration with external clients.
-  \item \textbf{Evolvability/maintainability (relevant):} components are modular (config, storage, RPC, cluster logic), enabling targeted improvements.
-  \item \textbf{Performance and concurrency (relevant):} async I/O and parallel replication are used; the design targets simplicity over peak throughput.
-  \item \textbf{Costs (relevant):} the stack is lightweight and containerized, minimizing infrastructure and onboarding overhead.
-\end{itemize}
+Transparency is partially relevant: clients can use any node through the same REST API, but distribution details are intentionally visible in health and replication diagnostics. Fault tolerance and dependability are central goals, addressed through replication, periodic ping checks, and post-failure synchronization. Scalability is moderately relevant: the peer-based architecture is horizontally extensible, but no dynamic membership or sharding is implemented in the current version.
+
+Security is currently limited, as no authentication or authorization layer is present; this is acceptable for a lab prototype but not production-ready. Resource sharing is highly relevant, since storage is distributed across nodes through replication and metadata coordination. Communication uses standard HTTP and JSON, ensuring openness and interoperability with external clients.
+
+Components are modular --- config, storage, RPC, and cluster logic --- which supports evolvability and maintainability. Performance and concurrency are addressed through async I/O and parallel replication, with the design prioritizing simplicity over peak throughput. Finally, the stack is lightweight and containerized, minimizing infrastructure and onboarding costs.
 
 \section{Design}\label{design}
 
 The design follows a symmetric peer-node architecture. Each node can receive client writes, store local data, replicate updates, and answer reads. This removes a single leader dependency and supports availability under partial failures.
 
+In the taxonomy of distributed systems, this structure is classified as a \textbf{peer-to-peer} architecture: all participants are functionally equivalent and no central coordinator mediates interactions. Compared to client-server or hierarchical designs, the symmetric topology eliminates the need for a leader election protocol, but places full responsibility for conflict resolution on the version ordering mechanism shared across all nodes.
+
 \subsection{Architecture}\label{architecture}
 
-The adopted style is \textbf{service-based peer-to-peer replication with dual interfaces}:
-\begin{itemize}
-  \item REST/HTTP for external client operations,
-  \item TCP JSON-RPC for internal node-to-node coordination.
-\end{itemize}
-
-This split keeps client interactions simple while allowing richer internal operations (ping, catalog exchange, metadata fetch, content fetch, replication).
+The adopted style is \textbf{service-based peer-to-peer replication with dual interfaces}. Externally, nodes expose a REST/HTTP API for client operations; internally, they communicate over a TCP JSON-RPC channel for coordination tasks such as ping, catalog exchange, metadata and content fetch, and file replication. This split keeps the client interface simple while allowing richer internal protocols.
 
 The component-level view is shown in \cref{fig:component-view}.
 
@@ -157,33 +136,17 @@ The component-level view is shown in \cref{fig:component-view}.
 
 \subsection{Infrastructure}\label{infrastructure}
 
-\begin{itemize}
-  \item \textbf{Components:} 3 identical node services and any number of REST clients.
-  \item \textbf{Per-node interfaces:} REST port 8000 (mapped to host 8001/8002/8003) and RPC port 9000 (mapped to 9001/9002/9003).
-  \item \textbf{Storage:} each node has a dedicated persistent volume containing file blobs and \texttt{metadata.json}.
-  \item \textbf{Placement:} all nodes run in a Docker Compose network for local deployment; the same design can be mapped to separate hosts.
-  \item \textbf{Discovery:} static peer configuration is provided by the \texttt{PEERS} environment variable (JSON array with host and ports).
-\end{itemize}
+The cluster consists of three identical node services and any number of REST clients. Each node exposes a REST endpoint on port 8000, mapped to host ports 8001, 8002, and 8003, along with an RPC endpoint on port 9000, mapped to host ports 9001, 9002, and 9003. Persistent storage is provided through a dedicated named volume per node, containing file blobs and a \texttt{metadata.json} document. All nodes run within a shared Docker Compose network for local deployment, and the same design can be mapped to separate physical or virtual hosts. Peer addresses are communicated through the static \texttt{PEERS} environment variable, which holds a JSON array of host and port configurations.
+
+File placement across the cluster reflects a key concern of computing with space in distributed systems: rather than replicating all files to all nodes, each file has a defined set of responsible replicas determined by hashing its logical path and rotating through the sorted peer list. This makes placement deterministic and stable for a fixed cluster topology, distributing storage load without requiring a central directory or a coordination round on every upload.
 
 \subsection{Modelling}\label{modelling}
 
-\begin{itemize}
-  \item \textbf{Domain entities:} PeerConfig, FileVersion, FileMetadata, and logical file content.
-  \item \textbf{State mapping:} each node stores local bytes under a deterministic file name and metadata indexed by logical path.
-  \item \textbf{Domain events:} file uploaded, file replicated, peer failed, peer recovered, catalog synchronized.
-  \item \textbf{Message types:} REST commands (upload/download/list) and RPC commands (ping, replicate\_file, get\_file\_metadata, get\_file\_content, get\_catalog).
-  \item \textbf{System state:} file metadata catalog, local blob storage, Lamport clock value, and peer reachability map.
-\end{itemize}
+The main domain entities are \texttt{PeerConfig}, \texttt{FileVersion}, \texttt{FileMetadata}, and logical file content. Each node stores file bytes under a deterministic local filename and indexes metadata by logical path. The system recognizes five domain events: file uploaded, file replicated, peer failed, peer recovered, and catalog synchronized. Messages fall into two categories: REST commands (upload, download, list) and RPC commands (ping, replicate\_file, get\_file\_metadata, get\_file\_content, get\_catalog). System state at any point is defined by the local metadata catalog, the blob storage contents, the current Lamport clock value, and the per-peer reachability map.
 
 \subsection{Interaction}\label{interaction}
 
-\begin{itemize}
-  \item \textbf{Upload path:} client sends upload to one node; node writes locally and replicates in parallel to selected peers; response success depends on write quorum.
-  \item \textbf{Read path:} node compares local metadata with peer metadata and fetches content from the newest source when needed.
-  \item \textbf{Monitoring path:} background task periodically pings peers and updates reachability status.
-  \item \textbf{Recovery path:} when a peer changes from unreachable to reachable, two-way synchronization is triggered.
-  \item \textbf{Pattern summary:} request/response interactions plus periodic anti-entropy synchronization.
-\end{itemize}
+On the upload path, a client sends a file to any node; that node writes locally and replicates the content in parallel to selected peers. A response is returned as successful only if the write quorum is reached. On the read path, a node compares its local metadata with peer metadata and fetches content from the newest source when needed. A background monitoring task periodically pings each known peer and updates their reachability status accordingly. When a peer transitions from unreachable to reachable, a two-way synchronization is triggered to repair stale or missing data. The overall pattern combines request/response interactions with periodic anti-entropy synchronization.
 
 The upload interaction is detailed in \cref{fig:upload-flow}; recovery synchronization is illustrated in \cref{fig:recovery-flow}.
 
@@ -203,200 +166,113 @@ The upload interaction is detailed in \cref{fig:upload-flow}; recovery synchroni
 
 \subsection{Behaviour}\label{behaviour}
 
-\begin{itemize}
-  \item Nodes are stateful components: each one manages local storage, metadata, peer status, and a Lamport clock.
-  \item The ingress node updates state on upload: it ticks the clock, creates a new version, and persists content.
-  \item Replica nodes update state when \texttt{replicate\_file} RPC messages arrive, using Lamport update semantics.
-  \item Storage accepts a version only if it is newer than the currently stored one.
-  \item Recovery logic can both push local newer files and pull newer remote files.
-\end{itemize}
+Nodes are stateful components: each one manages local storage, metadata, peer status, and a Lamport clock. On upload, the ingress node updates its state by ticking the clock, creating a new file version, and persisting the content. When a \texttt{replicate\_file} RPC message arrives, a replica node updates its state using Lamport update semantics. The storage layer accepts a new version only if it is strictly newer than the currently stored one, preventing regressions. Recovery logic can both push locally newer files to a rejoined peer and pull newer remote files from it.
+
+The use of Lamport logical clocks reflects a core result from the theory of distributed computation: in a network of processes communicating solely by message passing, it is impossible to synchronise physical clocks to arbitrary precision, making a shared global time reference unavailable. Lamport's \emph{happened-before} relation ($\rightarrow$) defines a partial causal order on events --- if event $a$ causes event $b$ then $C(a) < C(b)$ --- and the update rule $C_j \leftarrow \max(C_j, C_i) + 1$ on message receipt propagates this ordering across nodes. The version tuple $(lamport\_counter, version\_node)$ extends this partial order to a strict total order by appending the originating node identifier as a deterministic tie-breaker, ensuring every node independently agrees on the winning version of a file without additional coordination.
 
 \subsection{Data and Consistency Issues}\label{data-and-consistency-issues}
 
-\begin{itemize}
-  \item Persistent data includes file bytes and metadata fields (path, size, checksum, MIME type, version info).
-  \item Storage model is file-system plus JSON metadata document (\texttt{metadata.json}) per node.
-  \item Queries are local map lookups and catalog exchanges; there is no external DBMS.
-  \item Concurrent operations are protected with thread locks in clock and storage classes.
-  \item Shared cross-node data includes metadata versions and file content transported over RPC.
-  \item Consistency model is eventual consistency with deterministic last-writer-wins ordering based on Lamport metadata.
-\end{itemize}
+Persistent data includes file bytes and metadata fields such as path, size, checksum, MIME type, and version information. The storage model relies on the filesystem for blobs and on a per-node \texttt{metadata.json} document for indexed metadata; no external DBMS is used. Queries are local map lookups and catalog exchanges. Concurrent operations within a node are protected with thread locks in the clock and storage classes. Metadata versions and file content are the shared cross-node data, transported over RPC during replication and recovery. The consistency model is eventual consistency with deterministic last-writer-wins ordering based on Lamport metadata tuples.
+
+The system's positioning is best understood through the CAP theorem, which establishes that a distributed system cannot simultaneously guarantee all three of the following properties: \emph{consistency} (every read returns the most recent write), \emph{availability} (every request receives a response), and \emph{partition tolerance} (the system continues operating despite network splits). The system deliberately prioritises \textbf{availability and partition tolerance}: under a network partition, nodes that can reach write quorum continue accepting writes, while minority nodes reject them. The resulting temporary divergence is bounded and resolved deterministically once connectivity is restored, classifying the system as \emph{eventually consistent}.
+
+The replication model is leaderless and optimistic: any node can accept writes and propagate them to replicas without a designated primary. This avoids the single-point bottleneck and leader election overhead of primary-backup replication, but transfers the responsibility for convergence entirely to the version ordering mechanism.
 
 \subsection{Fault-Tolerance}\label{fault-tolerance}
 
-\begin{itemize}
-  \item Replication is configurable by replication factor; replica targets are selected by hashing logical path and rotating peer list.
-  \item Heart-beating is implemented via periodic \texttt{ping} RPC checks.
-  \item Timeouts are enforced on every RPC operation.
-  \item On write, if acknowledgements are below quorum, the node returns an error to the client.
-  \item On peer recovery, background synchronization repairs stale or missing data.
-  \item Errors in replication and recovery are isolated per peer and logged without crashing the node.
-\end{itemize}
+Replication is configurable through a replication factor; replica targets are selected by hashing the logical path and rotating through the peer list. Liveness is monitored through periodic \texttt{ping} RPC checks, with a timeout enforced on every RPC operation. If the number of write acknowledgements falls below quorum, the node returns an error to the client rather than silently accepting an under-replicated write. When a peer rejoins the cluster, background synchronization repairs stale or missing data. Errors occurring during replication or recovery are isolated per peer and logged without crashing the node.
+
+The fault-tolerance strategy maps to the four classical dependability attributes: \emph{availability} (requests are served even when peers have crashed), \emph{reliability} (data written to quorum survives single-node failures), \emph{safety} (writes are rejected rather than silently accepted when quorum cannot be reached), and \emph{maintainability} (rejoining nodes are repaired automatically without operator intervention). The assumed failure model is crash-stop: nodes either operate correctly or stop responding entirely. Byzantine failures --- where a node sends incorrect or malicious messages --- are outside the scope of this prototype.
+
+Write quorum acts as a lightweight substitute for full consensus. Protocols such as Paxos and Raft guarantee that all replicas agree on a single value before any client receives a success response, providing linearisable consistency at the cost of higher latency and synchronisation overhead. The quorum approach relaxes this guarantee: only $W$ of $N$ nodes need to acknowledge a write, and for the default three-node topology with $W = 2$ the system tolerates one node failure without blocking writes. The trade-off is that two concurrent writes issued to opposite sides of a partition can both succeed and be reconciled by last-writer-wins after reconnection, rather than one being rejected outright.
+
+The per-node \texttt{metadata.json} document functions as a durable checkpoint of the node's distributed catalog view. On recovery, the synchronization procedure performs a catalog diff --- analogous to replaying a write-ahead log from the last known checkpoint --- to identify missing or outdated entries and restore the node to a consistent state. Only files that are actually stale are transferred, minimising recovery bandwidth.
 
 \subsection{Availability}\label{availability}
 
-\begin{itemize}
-  \item No dedicated cache layer is implemented.
-  \item No explicit load balancer is included; clients may choose any node endpoint.
-  \item Under network partitioning, the system remains writable when write quorum can be reached.
-  \item Divergent replicas are reconciled when connectivity returns through catalog synchronization.
-\end{itemize}
+No dedicated cache layer or explicit load balancer is included; clients may freely choose any node endpoint. Under a network partition, the system remains writable as long as the write quorum can be reached among the surviving nodes. Divergent replicas are reconciled when connectivity is restored through catalog-based synchronization.
 
 \subsection{Security}\label{security}
 
-\begin{itemize}
-  \item The current prototype does not implement authentication or authorization.
-  \item No transport encryption (TLS) is configured by default.
-  \item Integrity checks are partially supported through SHA-256 checksums stored in metadata.
-  \item Security hardening is listed in \cref{future-works}.
-\end{itemize}
+The current prototype does not implement authentication, authorization, or transport encryption. Integrity is partially supported through SHA-256 checksums stored in file metadata. Security hardening is addressed in \cref{future-works}.
 
 \section{Implementation}\label{implementation}
 
-\begin{itemize}
-  \item \textbf{Network protocols:} HTTP for client API; raw TCP for node-to-node RPC.
-  \item \textbf{Data representation:} JSON for REST and RPC payloads; file content encoded in Base64 for RPC transport.
-  \item \textbf{Persistence/query style:} direct filesystem and JSON document handling; no SQL/NoSQL engine.
-  \item \textbf{Authentication/authorization:} not yet implemented in this project iteration.
-\end{itemize}
+The system uses HTTP as the client-facing protocol and raw TCP for internal node-to-node RPC. Payloads are represented in JSON for both REST and RPC; file content is encoded in Base64 for transport over the RPC channel. Persistence relies on direct filesystem and JSON document handling, with no SQL or NoSQL engine involved. Authentication and authorization are not yet implemented in this iteration.
 
 \subsection{Technological details}\label{technological-details}
 
-\begin{itemize}
-  \item Python 3.12 runtime.
-  \item FastAPI as REST framework.
-  \item Uvicorn as ASGI server.
-  \item asyncio for concurrent replication, peer monitoring, and RPC operations.
-  \item Docker and Docker Compose for reproducible three-node deployment.
-  \item Main modules:
-  \begin{itemize}
-    \item \texttt{cluster.py}: orchestration, quorum logic, replication, and recovery,
-    \item \texttt{storage.py}: persistent metadata and blob management,
-    \item \texttt{rpc.py}: line-delimited JSON-RPC over TCP,
-    \item \texttt{lamport.py}: logical clock semantics,
-    \item \texttt{main.py}: REST endpoints and application lifecycle.
-  \end{itemize}
-\end{itemize}
+The runtime is Python 3.12. FastAPI provides the REST framework and Uvicorn serves as the ASGI server. Concurrency is handled through asyncio, which underpins parallel replication, peer monitoring, and RPC operations. Deployment is managed with Docker and Docker Compose, providing a reproducible three-node environment.
+
+The codebase is organized into five main modules. \texttt{cluster.py} handles orchestration, quorum logic, replication, and recovery. \texttt{storage.py} manages persistent metadata and blob storage. \texttt{rpc.py} implements line-delimited JSON-RPC over TCP. \texttt{lamport.py} encapsulates logical clock semantics. \texttt{main.py} defines REST endpoints and controls the application lifecycle.
 
 \section{Validation}\label{validation}
 
 \subsection{Automatic Testing}\label{automatic-testing}
 
-\begin{itemize}
-  \item Dedicated unit tests are not present yet.
-  \item Integration and end-to-end behavior are automatically exercised by \texttt{scripts/simulate\_cluster.py}.
-  \item The script tests this scenario:
-  \begin{itemize}
-    \item start cluster,
-    \item upload first version,
-    \item verify read from a replica,
-    \item stop one node,
-    \item upload second version during failure,
-    \item restart failed node,
-    \item verify that restarted node serves latest version.
-  \end{itemize}
-  \item Command to run automated scenario: \texttt{python3 scripts/simulate\_cluster.py}.
-  \item Requirement coverage:
-  \begin{itemize}
-    \item FR1, FR2, FR4 via upload/read checks,
-    \item FR5 via post-restart synchronization verification,
-    \item NFR2 via quorum-based write with one node down.
-  \end{itemize}
-\end{itemize}
+Dedicated unit tests are not present in this iteration. Integration and end-to-end behavior are instead exercised automatically by \texttt{scripts/simulate\_cluster.py}. The script covers the following scenario: it starts the cluster, uploads a first file version, verifies that a replica node can serve it, stops one node, uploads a second version during the simulated failure, restarts the stopped node, and then verifies that the recovered node serves the latest version. The automated scenario can be run with \texttt{python3 scripts/simulate\_cluster.py}.
+
+In terms of requirement coverage, the script exercises FR1, FR2, and FR4 through upload and read checks; FR5 through post-restart synchronization verification; and NFR2 through a quorum-based write with one node down.
 
 \subsection{Acceptance test}\label{acceptance-test}
 
-\begin{itemize}
-  \item Manual testing was performed through \texttt{curl} commands against all node endpoints.
-  \item Tested behaviors:
-  \begin{itemize}
-    \item upload and metadata inspection,
-    \item cross-node download,
-    \item health endpoint changes after stopping and restarting containers,
-    \item write failure behavior when quorum is not reachable.
-  \end{itemize}
-  \item Manual checks were useful to inspect response payloads and operational diagnostics interactively.
-\end{itemize}
+Manual acceptance testing was performed through \texttt{curl} commands against all node endpoints. The tested behaviors included upload with metadata inspection, cross-node file download, health endpoint changes observed after stopping and restarting containers, and write failure behavior when the quorum could not be reached. Manual checks were particularly useful for inspecting response payloads and operational diagnostics interactively.
 
 \section{Deployment}\label{deployment}
 
-\begin{itemize}
-  \item \textbf{Required software:} Docker Engine with Docker Compose support.
-  \item \textbf{Startup command:}
+The only required software is Docker Engine with Docker Compose support. The entire cluster is started with:
 \begin{verbatim}
 docker compose up -d --build
 \end{verbatim}
-  \item \textbf{Expected outcome:} three containers running, exposed on REST ports 8001/8002/8003.
-  \item \textbf{Configured environment:} each container sets node id, ports, data directory, quorum parameters, peer list, and RPC timeout.
-  \item \textbf{Persistence:} named volumes \texttt{node1-data}, \texttt{node2-data}, and \texttt{node3-data} preserve data across restarts.
-  \item \textbf{Standalone local run:} optionally possible without containers using virtual environment and Uvicorn, with distinct environment variables per node.
-\end{itemize}
+After startup, three containers are running and accessible on REST ports 8001, 8002, and 8003. Each container is configured with its node identity, port assignments, data directory, quorum parameters, peer list, and RPC timeout through environment variables. Persistent storage is provided by the named volumes \texttt{node1-data}, \texttt{node2-data}, and \texttt{node3-data}, which survive container restarts. A standalone local run is also possible without containers by using a virtual environment and launching Uvicorn directly, with distinct environment variables set for each node.
 
 \section{User Guide}\label{user-guide}
 
-\begin{itemize}
-  \item Start the cluster:
+Start the cluster by running:
 \begin{verbatim}
 docker compose up -d --build
 \end{verbatim}
 
-  \item Upload a file:
+To upload a file, send a multipart POST request with the file content and an optional logical path:
 \begin{verbatim}
 curl -X POST http://127.0.0.1:8001/files/upload \
   -F "file=@./sample.txt" \
   -F "logical_path=docs/sample.txt"
 \end{verbatim}
 
-  \item List metadata on a node:
+To list the metadata catalog on a node:
 \begin{verbatim}
 curl http://127.0.0.1:8001/files
 \end{verbatim}
 
-  \item Download from another node:
+To download the file from a different node:
 \begin{verbatim}
 curl http://127.0.0.1:8002/files/docs/sample.txt/download -o sample.txt
 \end{verbatim}
 
-  \item Check cluster health:
+To inspect cluster health:
 \begin{verbatim}
 curl http://127.0.0.1:8001/health
 \end{verbatim}
 
-  \item Run full failure/recovery demo:
+To run the full failure and recovery demonstration:
 \begin{verbatim}
 python3 scripts/simulate_cluster.py
 \end{verbatim}
-\end{itemize}
 
 \section{Self-evaluation}\label{self-evaluation}
 
-\textbf{Role and contribution.} I designed and implemented the full prototype, including API layer, replication logic, Lamport clock management, persistence layer, containerized deployment, and demonstration script.
+\textbf{Role and contribution.} I designed and implemented the full prototype, including the API layer, replication logic, Lamport clock management, persistence layer, containerized deployment, and demonstration script.
 
-\textbf{Strengths.}
-\begin{itemize}
-  \item Clear modular separation of concerns.
-  \item Reproducible deployment with minimal setup.
-  \item Practical handling of failures with automatic recovery.
-  \item Deterministic version resolution in distributed updates.
-\end{itemize}
+The main strengths of the project are its clear modular separation of concerns, a reproducible deployment requiring minimal setup, practical failure handling with automatic recovery, and deterministic version resolution in distributed update scenarios.
 
-\textbf{Weaknesses.}
-\begin{itemize}
-  \item Missing security layer (authentication, authorization, TLS).
-  \item Limited automated testing depth (no unit test suite).
-  \item Static peer configuration and absence of dynamic membership.
-  \item No explicit load balancing or advanced placement policies.
-\end{itemize}
+On the other hand, several weaknesses remain. The system lacks a security layer covering authentication, authorization, and TLS. Automated testing is limited in depth, with no unit test suite in place. Peer configuration is static and no dynamic membership mechanism has been implemented. Finally, no explicit load balancing or advanced placement policies are currently supported.
 
 \section{Future works}\label{future-works}
 
-Planned improvements include:
-\begin{itemize}
-  \item introducing authentication and authorization (for example JWT plus role-based policies),
-  \item enabling TLS for REST and RPC channels,
-  \item supporting dynamic node membership and service discovery,
-  \item introducing load balancing and request routing strategies.
-\end{itemize}
+Several improvements are planned for future iterations. On the security front, the priority is to introduce authentication and authorization --- for example, JWT tokens with role-based policies --- and to enable TLS for both REST and RPC channels. Testing coverage should be extended with comprehensive unit and integration test suites backed by CI automation.
+
+The cluster management layer would benefit from dynamic node membership and service discovery, removing the current dependency on static configuration. Consistency semantics could be strengthened with tunable read-repair and optional vector clocks. Operational visibility is another planned improvement, with Prometheus-compatible telemetry as a first step. Finally, the data model could be extended with deletion semantics, tombstones, and configurable retention policies, and explicit load balancing and request routing strategies could be introduced.
 
 \bibliographystyle{plain}
 \nocite{*}
